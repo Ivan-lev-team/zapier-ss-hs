@@ -113,17 +113,12 @@ def _login(page: Page) -> None:
     logger.info("Logging in to SmartScout as %s", config.SS_EMAIL)
     page.goto(f"{config.SMARTSCOUT_BASE_URL}/sessions/signin", wait_until="domcontentloaded",
               timeout=config.REQUEST_TIMEOUT_MS)
-    logger.info("Login page loaded — URL: %s", page.url)
 
     page.locator('#username').fill(config.SS_EMAIL, timeout=10_000)
-    logger.info("Filled username field")
-
     page.locator('input[type="password"]').fill(config.SS_PASSWORD, timeout=10_000)
-    logger.info("Filled password field")
 
     # Angular component intercepts pointer events — JS click bypasses it
     page.evaluate("document.getElementById('btnSignin').click()")
-    logger.info("Clicked sign in button")
 
     try:
         page.wait_for_url(
@@ -140,7 +135,7 @@ def _is_authenticated(page: Page) -> bool:
     try:
         page.goto(f"{config.SMARTSCOUT_BASE_URL}/app/brands", wait_until="domcontentloaded",
                   timeout=config.REQUEST_TIMEOUT_MS)
-        # Wait for Angular router to complete any auth redirect before checking URL
+        # Wait for Angular router to complete any auth-guard redirect before checking
         page.wait_for_timeout(3000)
         authenticated = "/sessions/signin" not in page.url
         logger.info("Auth check — URL: %s — authenticated: %s", page.url, authenticated)
@@ -154,26 +149,30 @@ def _is_authenticated(page: Page) -> bool:
 # ---------------------------------------------------------------------------
 
 _T12M_LABEL_PATTERNS = [
+    re.compile(r"trailing\s+12", re.IGNORECASE),
     re.compile(r"12[\s\-]?month", re.IGNORECASE),
     re.compile(r"t12m", re.IGNORECASE),
-    re.compile(r"trailing\s+12", re.IGNORECASE),
-    re.compile(r"annual.*rev", re.IGNORECASE),
 ]
 
 
 def _find_revenue_on_page(page: Page) -> Optional[float]:
-    """Scan page text for a revenue figure near a T12M label."""
-    # Strategy 1: stat card whose label contains "12 month"
-    for label_pattern in _T12M_LABEL_PATTERNS:
-        elements = page.locator("*").filter(has_text=label_pattern).all()
-        for el in elements[:10]:
-            parent_text = el.evaluate("el => el.closest('[class]')?.innerText || ''")
-            revenue = _parse_revenue(parent_text)
-            if revenue is not None:
-                logger.debug("Found revenue via label match: $%.0f", revenue)
-                return revenue
+    """
+    Extract T12M revenue from the current page.
 
-    # Strategy 2: scan all body text lines for dollar amounts near T12M keywords
+    Strategy 1 — read directly from the first ag-grid row (targeted, preferred).
+    Strategy 2 — full page text scan near T12M column headers (fallback).
+    """
+    # Strategy 1: first ag-grid data row contains the revenue figure we just filtered to
+    try:
+        first_row_text = page.locator('.ag-row[row-index="0"]').inner_text(timeout=3_000)
+        revenue = _parse_revenue(first_row_text)
+        if revenue is not None:
+            logger.debug("Revenue from first ag-row: $%.2f", revenue)
+            return revenue
+    except Exception:
+        pass
+
+    # Strategy 2: scan body text for dollar amounts near T12M column header labels
     full_text = page.inner_text("body")
     lines = full_text.splitlines()
     for i, line in enumerate(lines):
@@ -181,7 +180,7 @@ def _find_revenue_on_page(page: Page) -> Optional[float]:
             context_text = " ".join(lines[i : i + 3])
             revenue = _parse_revenue(context_text)
             if revenue is not None:
-                logger.debug("Found revenue via text scan: $%.0f", revenue)
+                logger.debug("Revenue from text scan: $%.2f", revenue)
                 return revenue
 
     return None
@@ -189,74 +188,42 @@ def _find_revenue_on_page(page: Page) -> Optional[float]:
 
 def _search_brand(page: Page, query: str) -> bool:
     """
-    Navigate to the brands page, search for query, click the first result.
-    Returns True if a brand page was reached.
+    Filter the SmartScout brands grid by query.
+    Returns True if at least one row is visible after filtering.
     """
     logger.info("Searching SmartScout for: %s", query)
 
-    # App lives under /app/ — confirmed from post-login URL /app/home
     page.goto(f"{config.SMARTSCOUT_BASE_URL}/app/brands", wait_until="domcontentloaded",
               timeout=config.REQUEST_TIMEOUT_MS)
-    page.wait_for_timeout(3000)  # Angular needs time to render the data grid
+    page.wait_for_timeout(3000)  # wait for ag-grid to render
 
-    logger.info("Brands page loaded — URL: %s", page.url)
+    if "/sessions/signin" in page.url:
+        logger.warning("Redirected to login during brand search — session expired mid-run")
+        return False
 
-    # Log inputs to help debug selector if needed
-    inputs = page.evaluate("""() =>
-        Array.from(document.querySelectorAll('input')).map(el => ({
-            id: el.id, type: el.type, placeholder: el.placeholder
-        }))
-    """)
-    logger.info("Inputs on brands page: %s", inputs)
-
-    search_selectors = [
-        'input[placeholder="Brand Names"]',
-        'input[placeholder*="Brand" i]',
-        'input[placeholder*="search" i]',
-        'input[placeholder*="filter" i]',
-    ]
-    search_input = None
-    for sel in search_selectors:
-        try:
-            el = page.locator(sel).first
-            el.wait_for(timeout=5_000)
-            search_input = el
-            logger.info("Found search input: %s", sel)
-            break
-        except PWTimeout:
-            continue
-
-    if search_input is None:
-        logger.warning("No search input found on brands page")
+    # "Brand Names" is the ag-grid column filter — confirmed via DOM inspection
+    try:
+        search_input = page.locator('input[placeholder="Brand Names"]').first
+        search_input.wait_for(timeout=8_000)
+    except PWTimeout:
+        logger.warning("Brand Names filter input not found on brands page")
         return False
 
     search_input.click()
     search_input.fill(query)
-    # ag-grid column filter — filters in-place as you type, no Enter needed
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(3000)  # ag-grid filters in-place as you type
 
-    # ag-grid uses div[role="row"], not table tbody tr
+    # Confirm rows are visible
     try:
-        page.wait_for_selector('.ag-row, div[role="row"]', timeout=10_000)
+        page.wait_for_selector('.ag-row', timeout=8_000)
     except PWTimeout:
         logger.warning("No ag-grid rows visible after filtering for: %s", query)
         return False
 
     visible_rows = page.locator('.ag-row:not(.ag-hidden)').count()
-    logger.info("Visible rows after filtering for '%s': %d", query, visible_rows)
-    if visible_rows == 0:
-        return False
+    logger.info("Rows visible after filtering for '%s': %d", query, visible_rows)
 
-    # Click the first data row to open brand detail
-    first_row = page.locator('.ag-row[row-index="0"]').first
-    try:
-        first_row.click(timeout=5_000)
-        page.wait_for_timeout(3000)
-        logger.info("Clicked first result — URL: %s", page.url)
-        return True
-    except PWTimeout:
-        logger.warning("Could not click first row for: %s", query)
-        return False
+    return visible_rows > 0
 
 
 # ---------------------------------------------------------------------------
@@ -309,10 +276,10 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
                 _login(page)
                 _save_cookies(context)
 
-            # Search: try company name first, then root domain
+            # Try company name first, then root domain as fallback
             queries = [company_name]
             root_domain = domain.lstrip("www.").split("/")[0]
-            if root_domain and root_domain not in company_name.lower():
+            if root_domain and root_domain.lower() not in company_name.lower():
                 queries.append(root_domain)
 
             revenue = None
@@ -324,16 +291,17 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
                     if revenue is not None:
                         query_used = query
                         break
-                    logger.info("Brand page found for '%s' but no revenue data", query)
+                    logger.info("Rows found for '%s' but no revenue extracted", query)
                 else:
-                    logger.info("No brand found for query: %s", query)
+                    logger.info("No rows found for query: %s", query)
 
             context.close()
             browser.close()
 
         elapsed = time.monotonic() - start
         if revenue is not None:
-            logger.info("Scraped T12M for '%s': $%.0f (%.1fs)", company_name, revenue, elapsed)
+            logger.info("Scraped T12M for '%s': $%.2f (%.1fs, query='%s')",
+                        company_name, revenue, elapsed, query_used)
             return {
                 **result_base,
                 "revenue": revenue,
