@@ -156,7 +156,7 @@ def _login(page: Page) -> None:
 def _is_authenticated(page: Page) -> bool:
     """Navigate to a protected page; return True if we stay logged in."""
     try:
-        page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="networkidle",
+        page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="domcontentloaded",
                   timeout=config.REQUEST_TIMEOUT_MS)
         return "/sessions/signin" not in page.url
     except Exception:
@@ -213,8 +213,9 @@ def _search_brand(page: Page, query: str) -> bool:
     Returns True if a result was found and clicked.
     """
     logger.info("Searching SmartScout for: %s", query)
-    page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="networkidle",
+    page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="domcontentloaded",
               timeout=config.REQUEST_TIMEOUT_MS)
+    page.wait_for_timeout(3000)  # let Angular finish rendering
 
     # SmartScout's search input — selectors ordered by specificity
     search_selectors = [
