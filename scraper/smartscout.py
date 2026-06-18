@@ -7,7 +7,6 @@ Public interface:
 
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -87,7 +86,7 @@ def _clear_cookie_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Browser / context factory
+# Browser factory
 # ---------------------------------------------------------------------------
 
 def _browser_launch_args() -> list:
@@ -99,7 +98,6 @@ def _browser_launch_args() -> list:
 
 
 def _zenrows_proxy() -> dict:
-    """ZenRows proxy config for Playwright."""
     return {
         "server": "http://api.zenrows.com:8001",
         "username": config.ZENROWS_API_KEY,
@@ -111,52 +109,36 @@ def _zenrows_proxy() -> dict:
 # Login
 # ---------------------------------------------------------------------------
 
-def _screenshot(page: Page, name: str) -> None:
-    """Save a debug screenshot to the current directory."""
-    path = f"debug_{name}.png"
-    try:
-        page.screenshot(path=path, full_page=True, timeout=10_000)
-        logger.info("Screenshot saved: %s", path)
-    except Exception as exc:
-        logger.warning("Could not save screenshot: %s", exc)
-
-
 def _login(page: Page) -> None:
     logger.info("Logging in to SmartScout as %s", config.SS_EMAIL)
-    # Real login URL — /login redirects to /sessions/404
-    page.goto(f"{config.SMARTSCOUT_BASE_URL}/sessions/signin", wait_until="networkidle",
+    page.goto(f"{config.SMARTSCOUT_BASE_URL}/sessions/signin", wait_until="domcontentloaded",
               timeout=config.REQUEST_TIMEOUT_MS)
-
     logger.info("Login page loaded — URL: %s", page.url)
 
-    # SmartScout uses id="username" for the email field (Angular app)
     page.locator('#username').fill(config.SS_EMAIL, timeout=10_000)
     logger.info("Filled username field")
 
     page.locator('input[type="password"]').fill(config.SS_PASSWORD, timeout=10_000)
     logger.info("Filled password field")
 
-    # Click the Sign In button
-    page.locator('button[type="submit"], button:has-text("Sign In"), button:has-text("Login")').first.click()
+    # Angular component intercepts pointer events — JS click bypasses it
+    page.evaluate("document.getElementById('btnSignin').click()")
     logger.info("Clicked sign in button")
 
-    # Wait for redirect away from the signin page
     try:
         page.wait_for_url(
             lambda url: "/sessions/signin" not in url,
             timeout=config.REQUEST_TIMEOUT_MS,
         )
     except PWTimeout:
-        _screenshot(page, "login_failed")
-        raise RuntimeError("Login did not redirect — check credentials or see debug_login_failed.png")
+        raise RuntimeError("Login did not redirect — check credentials or SmartScout URL")
 
     logger.info("Login successful — URL: %s", page.url)
 
 
 def _is_authenticated(page: Page) -> bool:
-    """Navigate to a protected page; return True if we stay logged in."""
     try:
-        page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="domcontentloaded",
+        page.goto(f"{config.SMARTSCOUT_BASE_URL}/app/brands", wait_until="domcontentloaded",
                   timeout=config.REQUEST_TIMEOUT_MS)
         return "/sessions/signin" not in page.url
     except Exception:
@@ -176,28 +158,22 @@ _T12M_LABEL_PATTERNS = [
 
 
 def _find_revenue_on_page(page: Page) -> Optional[float]:
-    """
-    Scan page text for a revenue figure near a T12M label.
-    SmartScout shows revenue prominently on brand detail pages — try several
-    strategies in order of confidence.
-    """
-    # Strategy 1: look for a stat card/tile whose label contains "12 month"
+    """Scan page text for a revenue figure near a T12M label."""
+    # Strategy 1: stat card whose label contains "12 month"
     for label_pattern in _T12M_LABEL_PATTERNS:
         elements = page.locator("*").filter(has_text=label_pattern).all()
-        for el in elements[:10]:  # cap to avoid huge DOM walks
-            # Check the element's text and nearby siblings/parent for a dollar amount
+        for el in elements[:10]:
             parent_text = el.evaluate("el => el.closest('[class]')?.innerText || ''")
             revenue = _parse_revenue(parent_text)
             if revenue is not None:
                 logger.debug("Found revenue via label match: $%.0f", revenue)
                 return revenue
 
-    # Strategy 2: scan all text nodes for dollar amounts near "revenue" keywords
+    # Strategy 2: scan all body text lines for dollar amounts near T12M keywords
     full_text = page.inner_text("body")
     lines = full_text.splitlines()
     for i, line in enumerate(lines):
         if any(p.search(line) for p in _T12M_LABEL_PATTERNS):
-            # Check this line and the next two for a dollar figure
             context_text = " ".join(lines[i : i + 3])
             revenue = _parse_revenue(context_text)
             if revenue is not None:
@@ -209,27 +185,26 @@ def _find_revenue_on_page(page: Page) -> Optional[float]:
 
 def _search_brand(page: Page, query: str) -> bool:
     """
-    Type query into the SmartScout brand search and click the first result.
-    Returns True if a result was found and clicked.
+    Navigate to the brands page, search for query, click the first result.
+    Returns True if a brand page was reached.
     """
     logger.info("Searching SmartScout for: %s", query)
-    page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="domcontentloaded",
+
+    # App lives under /app/ — confirmed from post-login URL /app/home
+    page.goto(f"{config.SMARTSCOUT_BASE_URL}/app/brands", wait_until="domcontentloaded",
               timeout=config.REQUEST_TIMEOUT_MS)
-    page.wait_for_timeout(3000)  # let Angular finish rendering
+    page.wait_for_timeout(3000)  # Angular needs time to render the data grid
 
     logger.info("Brands page loaded — URL: %s", page.url)
-    _screenshot(page, "brands_page")
 
-    # Log all inputs on the page to help identify the search field
-    inputs = page.evaluate("""() => {
-        return Array.from(document.querySelectorAll('input')).map(el => ({
-            id: el.id, name: el.name, type: el.type,
-            placeholder: el.placeholder, className: el.className.substring(0, 80)
-        }));
-    }""")
-    logger.info("Inputs found on /brands: %s", inputs)
+    # Log inputs to help debug selector if needed
+    inputs = page.evaluate("""() =>
+        Array.from(document.querySelectorAll('input')).map(el => ({
+            id: el.id, type: el.type, placeholder: el.placeholder
+        }))
+    """)
+    logger.info("Inputs on brands page: %s", inputs)
 
-    # SmartScout's search input — selectors ordered by specificity
     search_selectors = [
         'input[placeholder*="search" i]',
         'input[placeholder*="brand" i]',
@@ -244,39 +219,38 @@ def _search_brand(page: Page, query: str) -> bool:
             el = page.locator(sel).first
             el.wait_for(timeout=5_000)
             search_input = el
-            logger.info("Found search input with selector: %s", sel)
+            logger.info("Found search input: %s", sel)
             break
         except PWTimeout:
             continue
 
     if search_input is None:
-        logger.warning("Could not find search input on /brands page")
+        logger.warning("No search input found on brands page")
         return False
 
     search_input.click()
     search_input.fill(query)
     search_input.press("Enter")
 
-    # Wait for results to appear
     try:
         page.wait_for_selector(
             'table tbody tr, [class*="result"], [class*="card"]',
             timeout=10_000,
         )
     except PWTimeout:
-        logger.warning("No search results appeared for query: %s", query)
+        logger.warning("No search results for: %s", query)
         return False
 
-    # Click first result row/card
     first_result = page.locator(
         'table tbody tr:first-child, [class*="result"]:first-child, [class*="card"]:first-child'
     ).first
     try:
         first_result.click(timeout=5_000)
-        page.wait_for_load_state("networkidle", timeout=config.REQUEST_TIMEOUT_MS)
+        page.wait_for_load_state("domcontentloaded", timeout=config.REQUEST_TIMEOUT_MS)
+        page.wait_for_timeout(2000)
         return True
     except PWTimeout:
-        logger.warning("Could not click first result for query: %s", query)
+        logger.warning("Could not click first result for: %s", query)
         return False
 
 
@@ -289,8 +263,8 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
     Log into SmartScout and return the T12M Amazon revenue for the given brand.
 
     Returns:
-        On success: {"revenue": 1234567.89, "currency": "USD",
-                     "source": "smartscout", "company_name": "...", "query_used": "..."}
+        On success: {"revenue": 1234567.89, "currency": "USD", "source": "smartscout",
+                     "company_name": "...", "query_used": "..."}
         On failure: {"revenue": None, "error": "<reason>", "company_name": "..."}
     """
     start = time.monotonic()
@@ -315,7 +289,7 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
             )
             page = context.new_page()
 
-            # --- Session management ---
+            # Session management
             cached = _load_cached_cookies()
             if cached:
                 context.add_cookies(cached)
@@ -330,7 +304,7 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
                 _login(page)
                 _save_cookies(context)
 
-            # --- Search: try company name, then root domain ---
+            # Search: try company name first, then root domain
             queries = [company_name]
             root_domain = domain.lstrip("www.").split("/")[0]
             if root_domain and root_domain not in company_name.lower():
@@ -354,10 +328,7 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
 
         elapsed = time.monotonic() - start
         if revenue is not None:
-            logger.info(
-                "Scraped T12M revenue for '%s': $%.0f (%.1fs, query='%s')",
-                company_name, revenue, elapsed, query_used,
-            )
+            logger.info("Scraped T12M for '%s': $%.0f (%.1fs)", company_name, revenue, elapsed)
             return {
                 **result_base,
                 "revenue": revenue,
