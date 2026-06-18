@@ -111,22 +111,74 @@ def _zenrows_proxy() -> dict:
 # Login
 # ---------------------------------------------------------------------------
 
+def _screenshot(page: Page, name: str) -> None:
+    """Save a debug screenshot to the current directory."""
+    path = f"debug_{name}.png"
+    try:
+        page.screenshot(path=path, full_page=True)
+        logger.info("Screenshot saved: %s", path)
+    except Exception as exc:
+        logger.warning("Could not save screenshot: %s", exc)
+
+
 def _login(page: Page) -> None:
     logger.info("Logging in to SmartScout as %s", config.SS_EMAIL)
     page.goto(f"{config.SMARTSCOUT_BASE_URL}/login", wait_until="networkidle",
               timeout=config.REQUEST_TIMEOUT_MS)
 
-    page.fill('input[type="email"], input[name="email"], input[placeholder*="email" i]',
-              config.SS_EMAIL)
-    page.fill('input[type="password"], input[name="password"]', config.SS_PASSWORD)
-    page.click('button[type="submit"], button:has-text("Sign in"), button:has-text("Log in")')
+    logger.info("Login page loaded — URL: %s", page.url)
+    _screenshot(page, "login_page")
+
+    # Try each email selector individually so we can log which one works
+    email_selectors = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="Email" ]',
+        'input[autocomplete="email"]',
+        'input[autocomplete="username"]',
+        'input',  # last resort: first input on page
+    ]
+    filled_email = False
+    for sel in email_selectors:
+        try:
+            page.locator(sel).first.fill(config.SS_EMAIL, timeout=3_000)
+            logger.info("Filled email using selector: %s", sel)
+            filled_email = True
+            break
+        except Exception:
+            continue
+
+    if not filled_email:
+        _screenshot(page, "login_no_email_field")
+        raise RuntimeError("Could not find email input — see debug_login_no_email_field.png")
+
+    password_selectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[placeholder*="password" i]',
+    ]
+    for sel in password_selectors:
+        try:
+            page.locator(sel).first.fill(config.SS_PASSWORD, timeout=3_000)
+            logger.info("Filled password using selector: %s", sel)
+            break
+        except Exception:
+            continue
+
+    page.keyboard.press("Enter")
 
     # Wait for redirect away from /login
-    page.wait_for_url(
-        lambda url: "/login" not in url,
-        timeout=config.REQUEST_TIMEOUT_MS,
-    )
-    logger.info("Login successful")
+    try:
+        page.wait_for_url(
+            lambda url: "/login" not in url,
+            timeout=config.REQUEST_TIMEOUT_MS,
+        )
+    except PWTimeout:
+        _screenshot(page, "login_failed")
+        raise RuntimeError("Login did not redirect — check credentials or see debug_login_failed.png")
+
+    logger.info("Login successful — URL: %s", page.url)
 
 
 def _is_authenticated(page: Page) -> bool:
