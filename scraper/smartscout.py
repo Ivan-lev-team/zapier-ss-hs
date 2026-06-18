@@ -217,10 +217,24 @@ def _search_brand(page: Page, query: str) -> bool:
               timeout=config.REQUEST_TIMEOUT_MS)
     page.wait_for_timeout(3000)  # let Angular finish rendering
 
+    logger.info("Brands page loaded — URL: %s", page.url)
+    _screenshot(page, "brands_page")
+
+    # Log all inputs on the page to help identify the search field
+    inputs = page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('input')).map(el => ({
+            id: el.id, name: el.name, type: el.type,
+            placeholder: el.placeholder, className: el.className.substring(0, 80)
+        }));
+    }""")
+    logger.info("Inputs found on /brands: %s", inputs)
+
     # SmartScout's search input — selectors ordered by specificity
     search_selectors = [
         'input[placeholder*="search" i]',
         'input[placeholder*="brand" i]',
+        'input[placeholder*="filter" i]',
+        'input[placeholder*="name" i]',
         'input[type="search"]',
         'input[type="text"]',
     ]
@@ -230,6 +244,7 @@ def _search_brand(page: Page, query: str) -> bool:
             el = page.locator(sel).first
             el.wait_for(timeout=5_000)
             search_input = el
+            logger.info("Found search input with selector: %s", sel)
             break
         except PWTimeout:
             continue
