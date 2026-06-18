@@ -115,7 +115,7 @@ def _screenshot(page: Page, name: str) -> None:
     """Save a debug screenshot to the current directory."""
     path = f"debug_{name}.png"
     try:
-        page.screenshot(path=path, full_page=True)
+        page.screenshot(path=path, full_page=True, timeout=10_000)
         logger.info("Screenshot saved: %s", path)
     except Exception as exc:
         logger.warning("Could not save screenshot: %s", exc)
@@ -123,55 +123,27 @@ def _screenshot(page: Page, name: str) -> None:
 
 def _login(page: Page) -> None:
     logger.info("Logging in to SmartScout as %s", config.SS_EMAIL)
-    page.goto(f"{config.SMARTSCOUT_BASE_URL}/login", wait_until="networkidle",
+    # Real login URL — /login redirects to /sessions/404
+    page.goto(f"{config.SMARTSCOUT_BASE_URL}/sessions/signin", wait_until="networkidle",
               timeout=config.REQUEST_TIMEOUT_MS)
 
     logger.info("Login page loaded — URL: %s", page.url)
-    _screenshot(page, "login_page")
 
-    # Try each email selector individually so we can log which one works
-    email_selectors = [
-        'input[type="email"]',
-        'input[name="email"]',
-        'input[placeholder*="email" i]',
-        'input[placeholder*="Email" ]',
-        'input[autocomplete="email"]',
-        'input[autocomplete="username"]',
-        'input',  # last resort: first input on page
-    ]
-    filled_email = False
-    for sel in email_selectors:
-        try:
-            page.locator(sel).first.fill(config.SS_EMAIL, timeout=3_000)
-            logger.info("Filled email using selector: %s", sel)
-            filled_email = True
-            break
-        except Exception:
-            continue
+    # SmartScout uses id="username" for the email field (Angular app)
+    page.locator('#username').fill(config.SS_EMAIL, timeout=10_000)
+    logger.info("Filled username field")
 
-    if not filled_email:
-        _screenshot(page, "login_no_email_field")
-        raise RuntimeError("Could not find email input — see debug_login_no_email_field.png")
+    page.locator('input[type="password"]').fill(config.SS_PASSWORD, timeout=10_000)
+    logger.info("Filled password field")
 
-    password_selectors = [
-        'input[type="password"]',
-        'input[name="password"]',
-        'input[placeholder*="password" i]',
-    ]
-    for sel in password_selectors:
-        try:
-            page.locator(sel).first.fill(config.SS_PASSWORD, timeout=3_000)
-            logger.info("Filled password using selector: %s", sel)
-            break
-        except Exception:
-            continue
+    # Click the Sign In button
+    page.locator('button[type="submit"], button:has-text("Sign In"), button:has-text("Login")').first.click()
+    logger.info("Clicked sign in button")
 
-    page.keyboard.press("Enter")
-
-    # Wait for redirect away from /login
+    # Wait for redirect away from the signin page
     try:
         page.wait_for_url(
-            lambda url: "/login" not in url,
+            lambda url: "/sessions/signin" not in url,
             timeout=config.REQUEST_TIMEOUT_MS,
         )
     except PWTimeout:
@@ -186,7 +158,7 @@ def _is_authenticated(page: Page) -> bool:
     try:
         page.goto(f"{config.SMARTSCOUT_BASE_URL}/brands", wait_until="networkidle",
                   timeout=config.REQUEST_TIMEOUT_MS)
-        return "/login" not in page.url
+        return "/sessions/signin" not in page.url
     except Exception:
         return False
 
