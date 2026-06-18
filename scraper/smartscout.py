@@ -210,12 +210,10 @@ def _search_brand(page: Page, query: str) -> bool:
     logger.info("Inputs on brands page: %s", inputs)
 
     search_selectors = [
+        'input[placeholder="Brand Names"]',
+        'input[placeholder*="Brand" i]',
         'input[placeholder*="search" i]',
-        'input[placeholder*="brand" i]',
         'input[placeholder*="filter" i]',
-        'input[placeholder*="name" i]',
-        'input[type="search"]',
-        'input[type="text"]',
     ]
     search_input = None
     for sel in search_selectors:
