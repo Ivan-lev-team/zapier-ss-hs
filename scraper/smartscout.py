@@ -157,31 +157,48 @@ _T12M_LABEL_PATTERNS = [
 
 def _find_revenue_on_page(page: Page) -> Optional[float]:
     """
-    Extract T12M revenue from the current page.
+    Extract T12M revenue from the first visible ag-grid row.
 
-    Strategy 1 — read directly from the first ag-grid row (targeted, preferred).
-    Strategy 2 — full page text scan near T12M column headers (fallback).
+    Reads cell values by col-id attribute (more reliable than innerText on
+    the row, which ag-grid virtualisation can make incomplete).
     """
-    # Strategy 1: first ag-grid data row contains the revenue figure we just filtered to
-    try:
-        first_row_text = page.locator('.ag-row[row-index="0"]').inner_text(timeout=3_000)
-        revenue = _parse_revenue(first_row_text)
-        if revenue is not None:
-            logger.debug("Revenue from first ag-row: $%.2f", revenue)
-            return revenue
-    except Exception:
-        pass
+    # Get all cells from the first row with their col-id and text content
+    cells: list[dict] = page.evaluate("""() => {
+        const row = document.querySelector('.ag-row[row-index="0"]');
+        if (!row) return [];
+        return Array.from(row.querySelectorAll('[col-id]')).map(el => ({
+            col_id: el.getAttribute('col-id') || '',
+            text: el.innerText.trim()
+        }));
+    }""")
 
-    # Strategy 2: scan body text for dollar amounts near T12M column header labels
-    full_text = page.inner_text("body")
-    lines = full_text.splitlines()
-    for i, line in enumerate(lines):
-        if any(p.search(line) for p in _T12M_LABEL_PATTERNS):
-            context_text = " ".join(lines[i : i + 3])
-            revenue = _parse_revenue(context_text)
+    logger.info("First row cells: %s", cells)
+
+    if not cells:
+        return None
+
+    # Strategy 1: find the cell whose col-id suggests it's the revenue column
+    revenue_col_keywords = ["revenue", "monthly", "t12", "trailing", "sales"]
+    for cell in cells:
+        col_id = cell.get("col_id", "").lower()
+        if any(kw in col_id for kw in revenue_col_keywords):
+            revenue = _parse_revenue(cell.get("text", ""))
             if revenue is not None:
-                logger.debug("Revenue from text scan: $%.2f", revenue)
+                logger.info("Revenue from col-id '%s': $%.2f", cell["col_id"], revenue)
                 return revenue
+
+    # Strategy 2: find the first cell in the row containing any dollar amount
+    # (T12M revenue is typically the largest dollar figure on a brand row)
+    candidates: list[float] = []
+    for cell in cells:
+        r = _parse_revenue(cell.get("text", ""))
+        if r is not None:
+            candidates.append(r)
+
+    if candidates:
+        revenue = max(candidates)
+        logger.info("Revenue from largest dollar value in row: $%.2f", revenue)
+        return revenue
 
     return None
 
