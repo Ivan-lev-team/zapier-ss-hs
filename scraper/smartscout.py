@@ -159,48 +159,51 @@ def _find_revenue_on_page(page: Page) -> Optional[float]:
     """
     Extract T12M revenue from the first visible ag-grid row.
 
-    Reads cell values by col-id attribute (more reliable than innerText on
-    the row, which ag-grid virtualisation can make incomplete).
+    SmartScout renders cells via Angular components — ag-cell.innerText is
+    empty. Values live in span.clickable (primary) / span.secondary (sub-value).
+    We identify the revenue column by its header text, then read that cell.
     """
-    # Get all cells from the first row with their col-id and text content
-    cells: list[dict] = page.evaluate("""() => {
+    raw: str = page.evaluate("""() => {
+        // Step 1: find the col-id of the revenue column by matching header text
+        let revenueColId = null;
+        const headers = document.querySelectorAll('.ag-header-cell[col-id]');
+        for (const h of headers) {
+            const text = h.innerText.toLowerCase();
+            if (text.includes('revenue') || text.includes('trailing')) {
+                revenueColId = h.getAttribute('col-id');
+                break;
+            }
+        }
+
+        // Step 2: read span.clickable (primary value) from that column in row 0
+        if (revenueColId) {
+            const cell = document.querySelector(
+                '.ag-row[row-index="0"] [col-id="' + revenueColId + '"]'
+            );
+            const span = cell && cell.querySelector('span.clickable:not(.secondary)');
+            if (span && span.innerText.trim()) {
+                return span.innerText.trim();
+            }
+        }
+
+        // Fallback: first span.clickable in row 0 that looks like a dollar amount
         const row = document.querySelector('.ag-row[row-index="0"]');
-        if (!row) return [];
-        return Array.from(row.querySelectorAll('[col-id]')).map(el => ({
-            col_id: el.getAttribute('col-id') || '',
-            text: el.innerText.trim()
-        }));
+        if (!row) return '';
+        const spans = row.querySelectorAll('span.clickable:not(.secondary)');
+        for (const s of spans) {
+            if (s.innerText.includes('$')) return s.innerText.trim();
+        }
+        return '';
     }""")
 
-    logger.info("First row cells: %s", cells)
-
-    if not cells:
+    logger.info("Revenue cell raw text: %r", raw)
+    if not raw:
         return None
 
-    # Strategy 1: find the cell whose col-id suggests it's the revenue column
-    revenue_col_keywords = ["revenue", "monthly", "t12", "trailing", "sales"]
-    for cell in cells:
-        col_id = cell.get("col_id", "").lower()
-        if any(kw in col_id for kw in revenue_col_keywords):
-            revenue = _parse_revenue(cell.get("text", ""))
-            if revenue is not None:
-                logger.info("Revenue from col-id '%s': $%.2f", cell["col_id"], revenue)
-                return revenue
-
-    # Strategy 2: find the first cell in the row containing any dollar amount
-    # (T12M revenue is typically the largest dollar figure on a brand row)
-    candidates: list[float] = []
-    for cell in cells:
-        r = _parse_revenue(cell.get("text", ""))
-        if r is not None:
-            candidates.append(r)
-
-    if candidates:
-        revenue = max(candidates)
-        logger.info("Revenue from largest dollar value in row: $%.2f", revenue)
-        return revenue
-
-    return None
+    revenue = _parse_revenue(raw)
+    if revenue is not None:
+        logger.info("Revenue extracted: $%.2f", revenue)
+    return revenue
 
 
 def _search_brand(page: Page, query: str) -> bool:
