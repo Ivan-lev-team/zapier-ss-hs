@@ -232,27 +232,30 @@ def _search_brand(page: Page, query: str) -> bool:
 
     search_input.click()
     search_input.fill(query)
-    search_input.press("Enter")
+    # ag-grid column filter — filters in-place as you type, no Enter needed
+    page.wait_for_timeout(3000)
 
+    # ag-grid uses div[role="row"], not table tbody tr
     try:
-        page.wait_for_selector(
-            'table tbody tr, [class*="result"], [class*="card"]',
-            timeout=10_000,
-        )
+        page.wait_for_selector('.ag-row, div[role="row"]', timeout=10_000)
     except PWTimeout:
-        logger.warning("No search results for: %s", query)
+        logger.warning("No ag-grid rows visible after filtering for: %s", query)
         return False
 
-    first_result = page.locator(
-        'table tbody tr:first-child, [class*="result"]:first-child, [class*="card"]:first-child'
-    ).first
+    visible_rows = page.locator('.ag-row:not(.ag-hidden)').count()
+    logger.info("Visible rows after filtering for '%s': %d", query, visible_rows)
+    if visible_rows == 0:
+        return False
+
+    # Click the first data row to open brand detail
+    first_row = page.locator('.ag-row[row-index="0"]').first
     try:
-        first_result.click(timeout=5_000)
-        page.wait_for_load_state("domcontentloaded", timeout=config.REQUEST_TIMEOUT_MS)
-        page.wait_for_timeout(2000)
+        first_row.click(timeout=5_000)
+        page.wait_for_timeout(3000)
+        logger.info("Clicked first result — URL: %s", page.url)
         return True
     except PWTimeout:
-        logger.warning("Could not click first result for: %s", query)
+        logger.warning("Could not click first row for: %s", query)
         return False
 
 
