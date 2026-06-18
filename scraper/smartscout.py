@@ -140,7 +140,11 @@ def _is_authenticated(page: Page) -> bool:
     try:
         page.goto(f"{config.SMARTSCOUT_BASE_URL}/app/brands", wait_until="domcontentloaded",
                   timeout=config.REQUEST_TIMEOUT_MS)
-        return "/sessions/signin" not in page.url
+        # Wait for Angular router to complete any auth redirect before checking URL
+        page.wait_for_timeout(3000)
+        authenticated = "/sessions/signin" not in page.url
+        logger.info("Auth check — URL: %s — authenticated: %s", page.url, authenticated)
+        return authenticated
     except Exception:
         return False
 
