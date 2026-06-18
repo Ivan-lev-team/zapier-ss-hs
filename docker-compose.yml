@@ -1,0 +1,10 @@
+services:
+  scraper:
+    build: .
+    ports:
+      - "5055:5055"
+    env_file:
+      - .env
+    restart: always
+    volumes:
+      - /tmp/ss_session.json:/tmp/ss_session.json
