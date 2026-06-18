@@ -247,6 +247,61 @@ def _search_brand(page: Page, query: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Query variant generation
+# ---------------------------------------------------------------------------
+
+def _build_query_variants(company_name: str, domain: str) -> list[str]:
+    """
+    Generate multiple search queries from a company name and domain.
+
+    Examples for "Hydro Flask" / "hydroflask.com":
+        → ["Hydro Flask", "HydroFlask", "hydroflask", "Hydro", "hydroflask"]
+
+    Examples for "Dr. Squatch" / "drsquatch.com":
+        → ["Dr. Squatch", "DrSquatch", "drsquatch", "Dr Squatch", "Squatch", "drsquatch"]
+    """
+    seen: set[str] = set()
+    variants: list[str] = []
+
+    def _add(q: str) -> None:
+        q = q.strip()
+        if q and q.lower() not in seen:
+            seen.add(q.lower())
+            variants.append(q)
+
+    # 1. Original name as-is
+    _add(company_name)
+
+    # 2. No spaces (HydroFlask)
+    _add(company_name.replace(" ", ""))
+
+    # 3. All lowercase no spaces (hydroflask)
+    _add(company_name.replace(" ", "").lower())
+
+    # 4. Strip punctuation: periods, commas, apostrophes (Dr. Squatch → Dr Squatch)
+    cleaned = re.sub(r"[.,''`]", "", company_name)
+    _add(cleaned)
+    _add(cleaned.replace(" ", ""))
+
+    # 5. With hyphens instead of spaces (Hydro-Flask)
+    _add(company_name.replace(" ", "-"))
+
+    # 6. Just the first word if multi-word (Hydro)
+    words = company_name.split()
+    if len(words) > 1:
+        _add(words[0])
+        # Also just the last word (Flask)
+        _add(words[-1])
+
+    # 7. Domain-based: strip TLD and www (hydroflask.com → hydroflask)
+    root_domain = domain.lower().lstrip("www.").split("/")[0]
+    domain_name = root_domain.rsplit(".", 1)[0] if "." in root_domain else root_domain
+    _add(domain_name)
+
+    return variants
+
+
+# ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
 
@@ -296,11 +351,8 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
                 _login(page)
                 _save_cookies(context)
 
-            # Try company name first, then root domain as fallback
-            queries = [company_name]
-            root_domain = domain.lstrip("www.").split("/")[0]
-            if root_domain and root_domain.lower() not in company_name.lower():
-                queries.append(root_domain)
+            queries = _build_query_variants(company_name, domain)
+            logger.info("Search variants for '%s': %s", company_name, queries)
 
             revenue = None
             query_used = None
