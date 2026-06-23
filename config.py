@@ -8,6 +8,7 @@ SS_EMAIL = os.environ["SS_EMAIL"]
 SS_PASSWORD = os.environ["SS_PASSWORD"]
 ZENROWS_API_KEY = os.getenv("ZENROWS_API_KEY", "")
 USE_ZENROWS = os.getenv("USE_ZENROWS", "false").lower() == "true"
+STORELEADS_API_KEY = os.getenv("STORELEADS_API_KEY", "8c15e821-6267-4f50-6fb0-b121ea5c")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 PORT = int(os.getenv("PORT", "5055"))
 

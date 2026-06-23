@@ -15,6 +15,7 @@ from flask import Flask, request, jsonify
 
 import config
 from scraper.smartscout import get_t12m_revenue
+from scraper.storeleads import get_shopify_revenue
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -66,6 +67,19 @@ def _post_callback(callback_url: str, payload: dict) -> None:
     logger.error("All callback attempts failed for URL: %s", callback_url)
 
 
+def _lookup_revenue(company_name: str, domain: str) -> dict:
+    """Try SmartScout first; fall back to StorLeads on not_found."""
+    result = get_t12m_revenue(company_name, domain)
+    if result.get("revenue") is not None:
+        return result
+    logger.info("SmartScout not found for '%s' — trying StorLeads fallback", company_name)
+    sl_result = get_shopify_revenue(company_name, domain)
+    if sl_result.get("revenue") is not None:
+        return sl_result
+    # Both sources exhausted — return SmartScout's not_found (primary source)
+    return result
+
+
 def _scrape_and_callback(
     company_name: str,
     domain: str,
@@ -73,7 +87,7 @@ def _scrape_and_callback(
     passthrough: dict,
 ) -> None:
     """Run in a background thread: scrape then POST result to Zapier."""
-    result = get_t12m_revenue(company_name, domain)
+    result = _lookup_revenue(company_name, domain)
     payload = {**result, **passthrough}
     _post_callback(callback_url, payload)
 
@@ -137,7 +151,7 @@ def scrape():
 
     # Sync mode — wait for result and return directly (for testing)
     start = time.monotonic()
-    result = get_t12m_revenue(company_name, domain)
+    result = _lookup_revenue(company_name, domain)
     result["elapsed_seconds"] = round(time.monotonic() - start, 2)
     if passthrough:
         result.update(passthrough)
