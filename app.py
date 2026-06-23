@@ -16,7 +16,7 @@ from flask import Flask, request, jsonify
 import config
 from scraper.smartscout import get_t12m_revenue
 from scraper.storeleads import get_shopify_revenue
-from scraper.shopscan import get_shopify_revenue_shopscan
+
 from scraper.leadmagic import get_company_revenue
 from scraper.google_snippet import get_revenue_from_snippets
 from scraper.claude_search import get_revenue_via_web
@@ -76,7 +76,7 @@ def _post_callback(callback_url: str, payload: dict) -> None:
 _SOURCES = [
     ("smartscout", lambda c, d: get_t12m_revenue(c, d)),
     ("storeleads", lambda c, d: get_shopify_revenue(c, d)),
-    ("shopscan",   lambda c, d: get_shopify_revenue_shopscan(d) if d else {"revenue": None, "error": "no_domain"}),
+
     ("leadmagic",  lambda c, d: get_company_revenue(c, d)),
     ("google",     lambda c, d: get_revenue_from_snippets(c, d)),
     ("claude",     lambda c, d: get_revenue_via_web(c, d)),

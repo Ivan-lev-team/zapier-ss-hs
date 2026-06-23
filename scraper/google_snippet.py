@@ -89,32 +89,11 @@ def _google_snippets_zenrows(query: str) -> str:
 
 
 def _google_snippets_playwright(query: str) -> list[str]:
-    """Fetch Google results — via ZenRows if enabled, else direct Playwright."""
+    """Fetch Google results via ZenRows only (direct Playwright is always blocked)."""
     try:
         text = _google_snippets_zenrows(query)
-
         if not text:
-            # Fallback: direct Playwright (likely blocked on datacenter IPs)
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=["--no-sandbox", "--disable-dev-shm-usage",
-                          "--disable-blink-features=AutomationControlled"],
-                )
-                context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    ),
-                    locale="en-US",
-                )
-                page = context.new_page()
-                url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=5&hl=en&gl=us"
-                page.goto(url, wait_until="domcontentloaded", timeout=15_000)
-                page.wait_for_timeout(2_000)
-                text = page.inner_text("body")
-                browser.close()
+            return []
 
         logger.info("Google snippet text sample for '%s': %s", query, text[:300].replace("\n", " "))
 
@@ -127,7 +106,7 @@ def _google_snippets_playwright(query: str) -> list[str]:
                 snippets.append(ctx[:400])
         return snippets
     except Exception as exc:
-        logger.warning("Google snippet Playwright error for '%s': %s", query, exc)
+        logger.warning("Google snippet error for '%s': %s", query, exc)
         return []
 
 
