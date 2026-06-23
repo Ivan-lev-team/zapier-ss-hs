@@ -79,12 +79,21 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
 
         try:
             page.goto(_URL, wait_until="domcontentloaded", timeout=_TIMEOUT)
-            logger.info("ShopScan: page loaded")
+            logger.info("ShopScan: page loaded — url=%s title=%s", page.url, page.title())
 
-            # Domain input has id="domainInput"
+            # Diagnostics: what's actually on the page?
+            input_count = page.locator("input").count()
+            domain_input_count = page.locator("#domainInput").count()
+            logger.info("ShopScan: total inputs=%d  #domainInput count=%d",
+                        input_count, domain_input_count)
+            if domain_input_count == 0:
+                body_sample = page.inner_text("body")[:400].replace("\n", " ")
+                logger.info("ShopScan body sample: %s", body_sample)
+
+            # Domain input has id="domainInput" — wait for it to attach (not necessarily visible)
             inp = page.locator("#domainInput")
-            inp.wait_for(state="visible", timeout=20_000)
-            inp.fill(clean)
+            inp.wait_for(state="attached", timeout=20_000)
+            inp.fill(clean, force=True)
             logger.info("ShopScan: entered domain '%s'", clean)
 
             # Submit the form — input is `required` so Enter submits it.

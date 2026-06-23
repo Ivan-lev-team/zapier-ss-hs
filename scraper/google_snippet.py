@@ -17,6 +17,8 @@ from typing import Optional
 import requests
 from playwright.sync_api import sync_playwright
 
+import config
+
 logger = logging.getLogger(__name__)
 
 _HEADERS = {
@@ -59,29 +61,56 @@ def _parse_revenue(text: str) -> Optional[int]:
     return result
 
 
-def _google_snippets_playwright(query: str) -> list[str]:
-    """Use Playwright headless browser to fetch Google results (handles JS redirect)."""
+def _google_snippets_zenrows(query: str) -> str:
+    """Fetch Google results via ZenRows proxy (bypasses Google's bot detection)."""
+    if not (config.USE_ZENROWS and config.ZENROWS_API_KEY):
+        return ""
+    url = "https://api.zenrows.com/v1/"
+    params = {
+        "apikey": config.ZENROWS_API_KEY,
+        "url": f"https://www.google.com/search?q={requests.utils.quote(query)}&num=10&hl=en&gl=us",
+        "premium_proxy": "true",
+    }
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage",
-                      "--disable-blink-features=AutomationControlled"],
-            )
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                locale="en-US",
-            )
-            page = context.new_page()
-            url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=5&hl=en&gl=us"
-            page.goto(url, wait_until="domcontentloaded", timeout=15_000)
-            page.wait_for_timeout(2_000)  # let JS render snippets
-            text = page.inner_text("body")
-            browser.close()
+        resp = requests.get(url, params=params, timeout=30)
+        if resp.status_code != 200:
+            logger.warning("ZenRows Google fetch returned %d for '%s'", resp.status_code, query)
+            return ""
+        # Strip HTML tags to plain text
+        text = re.sub(r"<[^>]+>", " ", resp.text)
+        return re.sub(r"\s+", " ", text)
+    except Exception as exc:
+        logger.warning("ZenRows Google error for '%s': %s", query, exc)
+        return ""
+
+
+def _google_snippets_playwright(query: str) -> list[str]:
+    """Fetch Google results — via ZenRows if enabled, else direct Playwright."""
+    try:
+        text = _google_snippets_zenrows(query)
+
+        if not text:
+            # Fallback: direct Playwright (likely blocked on datacenter IPs)
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage",
+                          "--disable-blink-features=AutomationControlled"],
+                )
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    locale="en-US",
+                )
+                page = context.new_page()
+                url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=5&hl=en&gl=us"
+                page.goto(url, wait_until="domcontentloaded", timeout=15_000)
+                page.wait_for_timeout(2_000)
+                text = page.inner_text("body")
+                browser.close()
 
         logger.info("Google snippet text sample for '%s': %s", query, text[:300].replace("\n", " "))
 
@@ -113,16 +142,9 @@ def get_revenue_from_snippets(company_name: str, domain: str) -> dict:
     if clean_domain:
         queries += [
             f"{clean_domain} site:zoominfo.com",
-            f"{clean_domain} site:crunchbase.com",
-            f"{clean_domain} site:owler.com",
             f"{clean_domain} revenue",
-            f"{clean_domain} annual revenue",
         ]
-    queries += [
-        f'"{company_name}" site:zoominfo.com',
-        f'"{company_name}" annual revenue',
-        f'"{company_name}" revenue',
-    ]
+    queries.append(f'"{company_name}" annual revenue')
 
     for query in queries:
         snippets = _google_snippets_playwright(query)

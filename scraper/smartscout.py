@@ -164,7 +164,23 @@ def _find_revenue_on_page(page: Page) -> Optional[float]:
     SmartScout renders cells via Angular components — ag-cell.innerText is
     empty. Values live in span.clickable (primary) / span.secondary (sub-value).
     We identify the revenue column by its header text, then read that cell.
+
+    ag-grid renders cell contents lazily, so retry a few times for the
+    revenue cell to populate before giving up.
     """
+    for attempt in range(5):
+        raw = _read_revenue_cell(page)
+        if raw:
+            revenue = _parse_revenue(raw)
+            if revenue is not None:
+                logger.info("Revenue extracted: $%.2f", revenue)
+                return revenue
+        page.wait_for_timeout(1_500)  # let the cell lazy-render
+    logger.info("Revenue cell stayed empty after retries")
+    return None
+
+
+def _read_revenue_cell(page: Page) -> str:
     raw: str = page.evaluate("""() => {
         // Step 1: find the col-id of the revenue column by matching header text
         let revenueColId = null;
@@ -199,13 +215,7 @@ def _find_revenue_on_page(page: Page) -> Optional[float]:
     }""")
 
     logger.info("Revenue cell raw text: %r", raw)
-    if not raw:
-        return None
-
-    revenue = _parse_revenue(raw)
-    if revenue is not None:
-        logger.info("Revenue extracted: $%.2f", revenue)
-    return revenue
+    return raw
 
 
 def _search_brand(page: Page, query: str) -> bool:

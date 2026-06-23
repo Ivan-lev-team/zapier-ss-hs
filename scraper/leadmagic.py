@@ -64,13 +64,21 @@ def _parse_revenue(value) -> Optional[int]:
 
 
 def _extract_revenue(data: dict) -> Optional[int]:
-    """Try common field names LeadMagic uses for revenue."""
-    for field in ("annual_revenue", "revenue", "estimated_revenue", "yearly_revenue",
-                  "company_revenue", "revenue_range"):
-        val = data.get(field)
-        parsed = _parse_revenue(val)
-        if parsed is not None and parsed > 0:
-            return parsed
+    """
+    Extract revenue from LeadMagic response.
+    Confirmed fields: 'revenue' (numeric) and 'revenue_formatted' (string like '$10.5M').
+    """
+    # Numeric revenue field first
+    val = data.get("revenue")
+    parsed = _parse_revenue(val)
+    if parsed is not None and parsed > 0:
+        return parsed
+
+    # Formatted string fallback ('$796.8M', '$1.2B', etc.)
+    parsed = _parse_revenue(data.get("revenue_formatted"))
+    if parsed is not None and parsed > 0:
+        return parsed
+
     return None
 
 
@@ -120,8 +128,9 @@ def get_company_revenue(company_name: str, domain: str) -> dict:
                 "company_found": company_found,
             }
 
-        logger.info("LeadMagic: found company but no revenue data for '%s'. Fields: %s | message: %s",
-                    company_name, list(record.keys()), record.get("message", ""))
+        logger.info("LeadMagic: company found but no revenue for '%s'. revenue=%r revenue_formatted=%r message=%r",
+                    company_name, record.get("revenue"), record.get("revenue_formatted"),
+                    record.get("message", ""))
         return {"revenue": None, "error": "not_found"}
 
     except requests.HTTPError as exc:
