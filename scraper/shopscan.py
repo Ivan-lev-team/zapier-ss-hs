@@ -48,7 +48,7 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
     logger.info("ShopScan lookup — domain='%s'", clean)
 
     proxy = {
-        "server": "http://api.zenrows.com:8001",
+        "server": "http://superproxy.zenrows.com:1337",
         "username": config.ZENROWS_API_KEY,
         "password": "js_render=true&premium_proxy=true",
     }
