@@ -73,7 +73,7 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
         page = context.new_page()
 
         def _on_response(response):
-            if "shopify-revenue-checker-handler" in response.url:
+            if "shopify-revenue-checker-handler" in response.url and response.status == 200:
                 try:
                     data = response.json()
                     captured["data"] = data
