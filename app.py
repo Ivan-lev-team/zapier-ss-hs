@@ -98,11 +98,25 @@ def _lookup_revenue(company_name: str, domain: str) -> dict:
     """
     Waterfall revenue lookup. Tries each source in order, returns the
     first result with a non-None revenue.
+
+    Platform detection for general sources (LeadMagic, Google, Claude):
+    - SmartScout found the brand (even without revenue) → Amazon
+    - StorLeads found the domain (even without revenue) → Shopify
+    - Neither → Amazon (default, most common for our customer base)
     """
+    detected_platform = None  # set when SmartScout or StorLeads finds the company
+
     for name, fn in _SOURCES:
         result = fn(company_name, domain)
+
+        # Track platform signals even when revenue isn't found
+        if detected_platform is None:
+            if name == "smartscout" and result.get("error") != "not_found":
+                detected_platform = "amazon"  # brand exists in SmartScout
+            elif name == "storeleads" and result.get("error") != "not_found":
+                detected_platform = "shopify"  # domain exists in StorLeads
+
         if result.get("revenue") is not None:
-            # Tag platform so Zapier can route to the right HubSpot field
             source = result.get("source", name)
             if source == "smartscout":
                 result["platform"] = "amazon"
@@ -111,9 +125,12 @@ def _lookup_revenue(company_name: str, domain: str) -> dict:
                 result["platform"] = "shopify"
                 result["hs_field"] = "shopify_trailing_12_revenue"
             else:
-                result["platform"] = "general"
-                result["hs_field"] = "amazon_trailing_12_revenue"  # default to amazon field
+                # General source — use detected platform or default to amazon
+                platform = detected_platform or "amazon"
+                result["platform"] = platform
+                result["hs_field"] = "shopify_trailing_12_revenue" if platform == "shopify" else "amazon_trailing_12_revenue"
             return result
+
         logger.info("%s: not found for '%s' — trying next source", name, company_name)
 
     logger.info("All sources exhausted for '%s'", company_name)
