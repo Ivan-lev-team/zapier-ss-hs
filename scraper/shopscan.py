@@ -109,26 +109,28 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
             except Exception:
                 inp.press("Enter")
 
-            # Wait for API response to be intercepted (up to 30s)
+            # Wait for result — check intercepted JSON first, fall back to page text
+            revenue = None
             for _ in range(15):
                 page.wait_for_timeout(2_000)
                 if captured:
+                    data = captured["data"]
+                    domain_data = data.get("data", {}).get("domain", {})
+                    yearly = domain_data.get("estimated_sales_yearly", "")
+                    monthly = domain_data.get("estimated_sales", "")
+                    revenue = _parse_usd(yearly) or _parse_usd(monthly)
+                    if revenue:
+                        logger.info("ShopScan hit (JSON): domain='%s' → $%d (yearly=%s)", clean, revenue, yearly)
+                        break
+                # Fall back: check page text for revenue figures
+                page_text = page.inner_text("body")
+                revenue = _parse_usd(page_text)
+                if revenue:
+                    logger.info("ShopScan hit (page text): domain='%s' → $%d", clean, revenue)
+                    logger.info("ShopScan page text sample: %s", page_text[:600].replace("\n", " "))
                     break
 
-            if not captured:
-                logger.info("ShopScan: no API response intercepted for '%s'", clean)
-                return {"revenue": None, "error": "not_found"}
-
-            data = captured["data"]
-            domain_data = data.get("data", {}).get("domain", {})
-
-            yearly = domain_data.get("estimated_sales_yearly", "")
-            monthly = domain_data.get("estimated_sales", "")
-
-            revenue = _parse_usd(yearly) or _parse_usd(monthly)
-
             if revenue:
-                logger.info("ShopScan hit: domain='%s' → $%d (yearly=%s)", clean, revenue, yearly)
                 return {
                     "revenue": revenue,
                     "currency": "USD",
@@ -136,7 +138,7 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
                     "domain_used": clean,
                 }
 
-            logger.info("ShopScan: no revenue in response for '%s'. yearly=%r", clean, yearly)
+            logger.info("ShopScan: no revenue found for '%s'", clean)
             return {"revenue": None, "error": "not_found"}
 
         except PWTimeout:
