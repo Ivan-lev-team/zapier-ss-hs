@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 5055
 
-CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:5055", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:5055", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

@@ -123,7 +123,7 @@ def get_revenue_via_web(
         client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=512,
             system=_SYSTEM,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],

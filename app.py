@@ -71,50 +71,39 @@ def _post_callback(callback_url: str, payload: dict) -> None:
     logger.error("All callback attempts failed for URL: %s", callback_url)
 
 
+# Source registry — name → callable(company_name, domain) -> dict
+# Ordered as the production waterfall.
+_SOURCES = [
+    ("smartscout", lambda c, d: get_t12m_revenue(c, d)),
+    ("storeleads", lambda c, d: get_shopify_revenue(c, d)),
+    ("shopscan",   lambda c, d: get_shopify_revenue_shopscan(d) if d else {"revenue": None, "error": "no_domain"}),
+    ("leadmagic",  lambda c, d: get_company_revenue(c, d)),
+    ("google",     lambda c, d: get_revenue_from_snippets(c, d)),
+    ("claude",     lambda c, d: get_revenue_via_web(c, d)),
+]
+_SOURCE_MAP = dict(_SOURCES)
+
+
+def _run_single_source(source: str, company_name: str, domain: str) -> dict:
+    """Run exactly one named source (for isolated testing/debugging)."""
+    fn = _SOURCE_MAP.get(source)
+    if fn is None:
+        return {"revenue": None, "error": "unknown_source",
+                "message": f"Valid sources: {', '.join(_SOURCE_MAP)}"}
+    logger.info("Running single source '%s' for '%s'", source, company_name)
+    return fn(company_name, domain)
+
+
 def _lookup_revenue(company_name: str, domain: str) -> dict:
     """
-    Waterfall revenue lookup:
-      1. SmartScout  — Amazon T12M revenue
-      2. StorLeads   — Shopify store revenue
-      3. LeadMagic   — B2B company database
-      4. Claude web  — Google search across reliable public sources
-    Returns first result with a non-None revenue.
+    Waterfall revenue lookup. Tries each source in order, returns the
+    first result with a non-None revenue.
     """
-    # 1. SmartScout
-    result = get_t12m_revenue(company_name, domain)
-    if result.get("revenue") is not None:
-        return result
-    logger.info("SmartScout: not found for '%s' — trying StorLeads", company_name)
-
-    # 2. StorLeads (Shopify)
-    result = get_shopify_revenue(company_name, domain)
-    if result.get("revenue") is not None:
-        return result
-    logger.info("StorLeads: not found for '%s' — trying ShopScan", company_name)
-
-    # 3. ShopScan (Shopify revenue checker, requires ZenRows)
-    if domain:
-        result = get_shopify_revenue_shopscan(domain)
+    for name, fn in _SOURCES:
+        result = fn(company_name, domain)
         if result.get("revenue") is not None:
             return result
-    logger.info("ShopScan: not found for '%s' — trying LeadMagic", company_name)
-
-    # 4. LeadMagic
-    result = get_company_revenue(company_name, domain)
-    if result.get("revenue") is not None:
-        return result
-    logger.info("LeadMagic: not found for '%s' — trying Google snippets", company_name)
-
-    # 5. Google snippet scraper (ZoomInfo/Crunchbase/Owler previews)
-    result = get_revenue_from_snippets(company_name, domain)
-    if result.get("revenue") is not None:
-        return result
-    logger.info("Google snippets: not found for '%s' — trying Claude web search", company_name)
-
-    # 6. Claude web search (last resort)
-    result = get_revenue_via_web(company_name, domain)
-    if result.get("revenue") is not None:
-        return result
+        logger.info("%s: not found for '%s' — trying next source", name, company_name)
 
     logger.info("All sources exhausted for '%s'", company_name)
     return {"revenue": None, "error": "not_found", "source": "all"}
@@ -165,6 +154,7 @@ def scrape():
     company_name = (body.get("company_name") or "").strip()
     domain = (body.get("domain") or "").strip()
     callback_url = (body.get("zapier_callback_url") or "").strip()
+    source = (body.get("source") or "").strip().lower()
 
     if not company_name and not domain:
         return jsonify({
@@ -191,7 +181,11 @@ def scrape():
 
     # Sync mode — wait for result and return directly (for testing)
     start = time.monotonic()
-    result = _lookup_revenue(company_name, domain)
+    if source:
+        # Test a single source in isolation
+        result = _run_single_source(source, company_name, domain)
+    else:
+        result = _lookup_revenue(company_name, domain)
     result["elapsed_seconds"] = round(time.monotonic() - start, 2)
     if passthrough:
         result.update(passthrough)
