@@ -21,14 +21,18 @@ _URL = "https://www.shopscan.app/tool/shopify-store-revenue-checker"
 _ZENROWS_API = "https://api.zenrows.com/v1/"
 _TIMEOUT = 60
 
-_REVENUE_RE = re.compile(r"USD\s*\$\s*([\d,]+(?:\.\d+)?)", re.IGNORECASE)
+_REVENUE_RE = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)\s*(thousand|million|billion|[KkMmBb])?", re.IGNORECASE)
 
+
+_MULTIPLIERS = {"k": 1_000, "thousand": 1_000, "m": 1_000_000, "million": 1_000_000, "b": 1_000_000_000, "billion": 1_000_000_000}
 
 def _parse_usd(text: str) -> Optional[int]:
     m = _REVENUE_RE.search(text)
     if not m:
         return None
-    val = round(float(m.group(1).replace(",", "")))
+    num = float(m.group(1).replace(",", ""))
+    suffix = (m.group(2) or "").lower()
+    val = round(num * _MULTIPLIERS.get(suffix, 1))
     if val < 1_000 or val > 1_000_000_000_000:
         return None
     return val
@@ -45,9 +49,9 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
     instructions = json.dumps([
         {"wait": 3000},
         {"fill": ["#domainInput", clean]},
-        {"wait": 500},
-        {"click": "button[type='submit']"},
-        {"wait": 15000},
+        {"wait": 1000},
+        {"click": "button"},
+        {"wait": 20000},
     ])
 
     params = {
@@ -70,7 +74,7 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
         # Strip HTML tags and search for revenue
         text = re.sub(r"<[^>]+>", " ", resp.text)
         text = re.sub(r"\s+", " ", text)
-        logger.info("ShopScan page text sample: %s", text[:600])
+        logger.info("ShopScan page text sample: %s", text[:2000])
 
         revenue = _parse_usd(text)
         if revenue:
