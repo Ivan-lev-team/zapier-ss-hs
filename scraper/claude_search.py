@@ -31,9 +31,14 @@ IMPORTANT: Try ALL of these search strategies in order, stopping when you find d
 4. Search: "<company_name> sales revenue site:crunchbase.com OR site:zoominfo.com OR site:dnb.com"
 5. If Amazon storefront provided, search: "<amazon_store_name> revenue"
 
-Look for data in: Crunchbase, ZoomInfo, D&B Hoovers, SimilarWeb, LinkedIn,
-press releases, SEC filings, Forbes, Bloomberg, industry reports, or any credible source.
-Revenue estimates from data providers (ZoomInfo, D&B, Crunchbase) are acceptable.
+Search these sources in order — do not stop after one search:
+1. Crunchbase, ZoomInfo, D&B Hoovers (dnb.com) — most reliable
+2. SimilarWeb, Semrush, Owler, Craft.co, Manta — traffic/revenue estimates
+3. Press releases, SEC filings, LinkedIn, Forbes, Bloomberg
+4. Any site that mentions the company + revenue in the same context
+
+Revenue estimates from data aggregators (ZoomInfo, D&B, Owler, SimilarWeb) are acceptable.
+For small companies, Owler and Craft.co often have estimates even when others don't.
 
 Respond ONLY with a JSON object, no markdown, no explanation:
 {

@@ -120,8 +120,8 @@ def get_company_revenue(company_name: str, domain: str) -> dict:
                 "company_found": company_found,
             }
 
-        logger.info("LeadMagic: found company but no revenue data for '%s'. Fields: %s",
-                    company_name, list(record.keys()))
+        logger.info("LeadMagic: found company but no revenue data for '%s'. Fields: %s | message: %s",
+                    company_name, list(record.keys()), record.get("message", ""))
         return {"revenue": None, "error": "not_found"}
 
     except requests.HTTPError as exc:
