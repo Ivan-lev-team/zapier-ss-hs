@@ -83,7 +83,7 @@ def get_company_revenue(company_name: str, domain: str) -> dict:
 
     headers = {
         "Content-Type": "application/json",
-        "X-LEADMAGIC-KEY": config.LEADMAGIC_API_KEY,
+        "x-api-key": config.LEADMAGIC_API_KEY,
     }
 
     # Build payload — include domain if available
