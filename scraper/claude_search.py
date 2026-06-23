@@ -20,17 +20,26 @@ import config
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = """You are a revenue research assistant. Given a company name and domain,
-find their most recent annual revenue (trailing 12 months or last fiscal year).
+_SYSTEM = """You are a revenue research assistant. Given a company name, website domain,
+and optionally an Amazon storefront URL, find their most recent annual revenue
+(trailing 12 months or last fiscal year).
 
-Search Google for reliable sources: company press releases, Crunchbase, LinkedIn,
-Forbes, Bloomberg, SEC filings, or industry reports. Prefer verified data over estimates.
+IMPORTANT: Try ALL of these search strategies in order, stopping when you find data:
+1. Search: "<domain> revenue" (e.g. "ilctech.com revenue")
+2. Search: "<company_name> annual revenue"
+3. Search: "<company_name> <domain> revenue"
+4. Search: "<company_name> sales revenue site:crunchbase.com OR site:zoominfo.com OR site:dnb.com"
+5. If Amazon storefront provided, search: "<amazon_store_name> revenue"
+
+Look for data in: Crunchbase, ZoomInfo, D&B Hoovers, SimilarWeb, LinkedIn,
+press releases, SEC filings, Forbes, Bloomberg, industry reports, or any credible source.
+Revenue estimates from data providers (ZoomInfo, D&B, Crunchbase) are acceptable.
 
 Respond ONLY with a JSON object, no markdown, no explanation:
 {
   "revenue_usd": <integer dollars or null>,
   "confidence": "high|medium|low",
-  "source_description": "<where you found it>"
+  "source_description": "<where you found it and what query worked>"
 }
 
 Rules:
@@ -38,9 +47,9 @@ Rules:
 - If revenue is in another currency, convert to USD
 - If you find a range, use the midpoint
 - confidence=high means verified from official filing/press release
-- confidence=medium means reliable third-party source (Crunchbase, Bloomberg)
-- confidence=low means estimate or indirect inference
-- Return null if you genuinely cannot find anything reliable
+- confidence=medium means reliable third-party source (Crunchbase, ZoomInfo, D&B)
+- confidence=low means rough estimate or indirect inference
+- Only return null if ALL search strategies above return nothing useful
 """
 
 
@@ -75,14 +84,21 @@ def get_revenue_via_web(
         logger.warning("ANTHROPIC_API_KEY not set — skipping Claude web search")
         return {"revenue": None, "error": "not_configured"}
 
-    context_parts = [f"Company name: {company_name}"]
+    search_hints = []
     if domain:
-        context_parts.append(f"Website: {domain}")
+        clean_domain = domain.lower().replace("https://", "").replace("http://", "").split("/")[0]
+        search_hints.append(f'Try searching: "{clean_domain} revenue" first')
+    search_hints.append(f'Also try: "{company_name} annual revenue"')
     if amazon_storefront:
-        context_parts.append(f"Amazon storefront: {amazon_storefront}")
-    context_parts.append("Find their trailing 12-month or most recent annual revenue in USD.")
+        search_hints.append(f'Amazon storefront: {amazon_storefront}')
 
-    user_message = "\n".join(context_parts)
+    user_message = (
+        f"Company name: {company_name}\n"
+        f"Website domain: {domain or 'unknown'}\n"
+        + ("\n".join(search_hints))
+        + "\n\nFind their trailing 12-month or most recent annual revenue in USD. "
+        "Try all search strategies listed in your instructions before giving up."
+    )
 
     try:
         client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
