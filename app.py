@@ -102,6 +102,17 @@ def _lookup_revenue(company_name: str, domain: str) -> dict:
     for name, fn in _SOURCES:
         result = fn(company_name, domain)
         if result.get("revenue") is not None:
+            # Tag platform so Zapier can route to the right HubSpot field
+            source = result.get("source", name)
+            if source == "smartscout":
+                result["platform"] = "amazon"
+                result["hs_field"] = "amazon_trailing_12_revenue"
+            elif source == "storeleads":
+                result["platform"] = "shopify"
+                result["hs_field"] = "shopify_trailing_12_revenue"
+            else:
+                result["platform"] = "general"
+                result["hs_field"] = "amazon_trailing_12_revenue"  # default to amazon field
             return result
         logger.info("%s: not found for '%s' — trying next source", name, company_name)
 
