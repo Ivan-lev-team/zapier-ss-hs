@@ -89,20 +89,34 @@ def get_revenue_via_web(
         logger.warning("ANTHROPIC_API_KEY not set — skipping Claude web search")
         return {"revenue": None, "error": "not_configured"}
 
-    search_hints = []
+    clean_domain = ""
     if domain:
         clean_domain = domain.lower().replace("https://", "").replace("http://", "").split("/")[0]
-        search_hints.append(f'Try searching: "{clean_domain} revenue" first')
-    search_hints.append(f'Also try: "{company_name} annual revenue"')
+
+    queries = []
+    if clean_domain:
+        queries += [
+            f"{clean_domain} site:zoominfo.com",
+            f"{clean_domain} site:crunchbase.com",
+            f"{clean_domain} site:dnb.com",
+            f"{clean_domain} site:owler.com",
+            f"{clean_domain} revenue",
+        ]
+    queries += [
+        f'"{company_name}" site:zoominfo.com',
+        f'"{company_name}" annual revenue',
+        f'"{company_name}" revenue',
+    ]
     if amazon_storefront:
-        search_hints.append(f'Amazon storefront: {amazon_storefront}')
+        queries.append(f"{amazon_storefront} revenue")
 
     user_message = (
         f"Company name: {company_name}\n"
-        f"Website domain: {domain or 'unknown'}\n"
-        + ("\n".join(search_hints))
-        + "\n\nFind their trailing 12-month or most recent annual revenue in USD. "
-        "Try all search strategies listed in your instructions before giving up."
+        f"Website domain: {clean_domain or 'unknown'}\n\n"
+        f"Run these searches IN ORDER and stop as soon as you find a revenue figure. "
+        f"For each search, visit the actual page (not just the snippet) to extract the number:\n\n"
+        + "\n".join(f"{i+1}. {q}" for i, q in enumerate(queries))
+        + "\n\nReturn the revenue in USD as an integer."
     )
 
     try:
