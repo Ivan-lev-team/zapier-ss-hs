@@ -87,6 +87,14 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
             page.goto(_URL, wait_until="domcontentloaded", timeout=_TIMEOUT)
             logger.info("ShopScan: page loaded — url=%s", page.url)
 
+            # Dump page state for diagnostics
+            logger.info("ShopScan: url=%s title=%r inputs=%d #domainInput=%d",
+                        page.url, page.title(),
+                        page.locator("input").count(),
+                        page.locator("#domainInput").count())
+            body_sample = page.inner_text("body")[:500].replace("\n", " ")
+            logger.info("ShopScan body sample: %s", body_sample)
+
             inp = page.locator("#domainInput")
             inp.wait_for(state="attached", timeout=30_000)
             inp.fill(clean, force=True)
