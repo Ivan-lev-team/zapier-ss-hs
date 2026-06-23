@@ -22,7 +22,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-_API_URL = "https://api.leadmagic.io/company-search"
+_API_URL = "https://api.leadmagic.io/v1/companies/company-search"
 _TIMEOUT = 15
 
 # LeadMagic revenue range strings → midpoint in dollars
@@ -91,14 +91,16 @@ def get_company_revenue(company_name: str, domain: str) -> dict:
 
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": config.LEADMAGIC_API_KEY,
+        "X-API-Key": config.LEADMAGIC_API_KEY,
     }
 
-    # Build payload — include domain if available
-    payload = {"company_name": company_name}
+    # Build payload — prefer domain (most accurate per LeadMagic docs)
+    payload = {}
     if domain:
         clean = domain.lower().replace("https://", "").replace("http://", "").split("/")[0]
-        payload["company_website"] = clean
+        payload["company_domain"] = clean
+    if company_name:
+        payload["company_name"] = company_name
 
     try:
         resp = requests.post(_API_URL, json=payload, headers=headers, timeout=_TIMEOUT)
