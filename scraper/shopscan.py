@@ -1,6 +1,10 @@
 """
-ShopScan revenue checker — scrapes https://www.shopscan.app/tool/shopify-store-revenue-checker
-Uses ZenRows proxy to bypass CAPTCHA.
+ShopScan revenue checker — intercepts the JSON API response from
+https://www.shopscan.app/tool/shopify-store-revenue-checker
+
+The page uses Cloudflare Turnstile so we need Playwright + ZenRows proxy.
+We intercept the /api/shopify-revenue-checker-handler.php response to get
+estimated_sales_yearly directly from JSON instead of parsing page text.
 
 Public interface:
     get_shopify_revenue_shopscan(domain) -> dict
@@ -17,36 +21,25 @@ import config
 logger = logging.getLogger(__name__)
 
 _URL = "https://www.shopscan.app/tool/shopify-store-revenue-checker"
-_TIMEOUT = 45_000  # ms
+_TIMEOUT = 60_000  # ms
 
 _REVENUE_RE = re.compile(
-    r"\$\s*([\d,]+(?:\.\d+)?)\s*(thousand|million|billion|[KkMmBb])?",
+    r"USD\s*\$\s*([\d,]+(?:\.\d+)?)",
     re.IGNORECASE,
 )
-_MULTIPLIERS = {
-    "k": 1_000, "thousand": 1_000,
-    "m": 1_000_000, "million": 1_000_000,
-    "b": 1_000_000_000, "billion": 1_000_000_000,
-}
 
 
-def _parse_revenue(text: str) -> Optional[int]:
-    match = _REVENUE_RE.search(text)
-    if not match:
+def _parse_usd(text: str) -> Optional[int]:
+    m = _REVENUE_RE.search(text)
+    if not m:
         return None
-    number = float(match.group(1).replace(",", ""))
-    suffix = (match.group(2) or "").lower()
-    result = round(number * _MULTIPLIERS.get(suffix, 1))
-    if result < 1_000 or result > 1_000_000_000_000:
+    val = round(float(m.group(1).replace(",", "")))
+    if val < 1_000 or val > 1_000_000_000_000:
         return None
-    return result
+    return val
 
 
 def get_shopify_revenue_shopscan(domain: str) -> dict:
-    """
-    Load ShopScan revenue checker, submit domain, extract revenue.
-    Requires ZenRows to bypass CAPTCHA (USE_ZENROWS=true in env).
-    """
     if not config.USE_ZENROWS:
         logger.info("ShopScan: ZenRows disabled — skipping")
         return {"revenue": None, "error": "zenrows_disabled"}
@@ -59,6 +52,8 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
         "username": config.ZENROWS_API_KEY,
         "password": "js_render=true&premium_proxy=true",
     }
+
+    captured = {}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -77,50 +72,55 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
         )
         page = context.new_page()
 
+        def _on_response(response):
+            if "shopify-revenue-checker-handler" in response.url:
+                try:
+                    data = response.json()
+                    captured["data"] = data
+                    logger.info("ShopScan API response intercepted: status=%s", response.status)
+                except Exception as exc:
+                    logger.warning("ShopScan: failed to parse intercepted response: %s", exc)
+
+        page.on("response", _on_response)
+
         try:
             page.goto(_URL, wait_until="domcontentloaded", timeout=_TIMEOUT)
-            logger.info("ShopScan: page loaded — url=%s title=%s", page.url, page.title())
+            logger.info("ShopScan: page loaded — url=%s", page.url)
 
-            # Diagnostics: what's actually on the page?
-            input_count = page.locator("input").count()
-            domain_input_count = page.locator("#domainInput").count()
-            logger.info("ShopScan: total inputs=%d  #domainInput count=%d",
-                        input_count, domain_input_count)
-            if domain_input_count == 0:
-                body_sample = page.inner_text("body")[:400].replace("\n", " ")
-                logger.info("ShopScan body sample: %s", body_sample)
-
-            # Domain input has id="domainInput" — wait for it to attach (not necessarily visible)
             inp = page.locator("#domainInput")
-            inp.wait_for(state="attached", timeout=20_000)
+            inp.wait_for(state="attached", timeout=30_000)
             inp.fill(clean, force=True)
             logger.info("ShopScan: entered domain '%s'", clean)
 
-            # Submit the form — input is `required` so Enter submits it.
-            # Try a submit button first, fall back to Enter.
             try:
                 page.locator(
                     'button[type="submit"], button:has-text("Check"), '
                     'button:has-text("Analyze"), button:has-text("Get"), '
                     'button:has-text("Search"), button:has-text("Revenue")'
-                ).first.click(timeout=4_000)
+                ).first.click(timeout=5_000)
             except Exception:
                 inp.press("Enter")
 
-            # Wait for result to render — poll for a $ figure appearing
-            logger.info("ShopScan: waiting for results...")
-            page_text = ""
-            for _ in range(12):  # up to ~24s
+            # Wait for API response to be intercepted (up to 30s)
+            for _ in range(15):
                 page.wait_for_timeout(2_000)
-                page_text = page.inner_text("body")
-                if _parse_revenue(page_text):
+                if captured:
                     break
 
-            logger.info("ShopScan page text sample: %s", page_text[:600].replace("\n", " "))
+            if not captured:
+                logger.info("ShopScan: no API response intercepted for '%s'", clean)
+                return {"revenue": None, "error": "not_found"}
 
-            revenue = _parse_revenue(page_text)
+            data = captured["data"]
+            domain_data = data.get("data", {}).get("domain", {})
+
+            yearly = domain_data.get("estimated_sales_yearly", "")
+            monthly = domain_data.get("estimated_sales", "")
+
+            revenue = _parse_usd(yearly) or _parse_usd(monthly)
+
             if revenue:
-                logger.info("ShopScan hit: domain='%s' → $%d", clean, revenue)
+                logger.info("ShopScan hit: domain='%s' → $%d (yearly=%s)", clean, revenue, yearly)
                 return {
                     "revenue": revenue,
                     "currency": "USD",
@@ -128,7 +128,7 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
                     "domain_used": clean,
                 }
 
-            logger.info("ShopScan: no revenue found for '%s'", clean)
+            logger.info("ShopScan: no revenue in response for '%s'. yearly=%r", clean, yearly)
             return {"revenue": None, "error": "not_found"}
 
         except PWTimeout:
