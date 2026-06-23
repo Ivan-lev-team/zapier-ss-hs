@@ -16,6 +16,8 @@ from flask import Flask, request, jsonify
 import config
 from scraper.smartscout import get_t12m_revenue
 from scraper.storeleads import get_shopify_revenue
+from scraper.leadmagic import get_company_revenue
+from scraper.claude_search import get_revenue_via_web
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -68,16 +70,39 @@ def _post_callback(callback_url: str, payload: dict) -> None:
 
 
 def _lookup_revenue(company_name: str, domain: str) -> dict:
-    """Try SmartScout first; fall back to StorLeads on not_found."""
+    """
+    Waterfall revenue lookup:
+      1. SmartScout  — Amazon T12M revenue
+      2. StorLeads   — Shopify store revenue
+      3. LeadMagic   — B2B company database
+      4. Claude web  — Google search across reliable public sources
+    Returns first result with a non-None revenue.
+    """
+    # 1. SmartScout
     result = get_t12m_revenue(company_name, domain)
     if result.get("revenue") is not None:
         return result
-    logger.info("SmartScout not found for '%s' — trying StorLeads fallback", company_name)
-    sl_result = get_shopify_revenue(company_name, domain)
-    if sl_result.get("revenue") is not None:
-        return sl_result
-    # Both sources exhausted — return SmartScout's not_found (primary source)
-    return result
+    logger.info("SmartScout: not found for '%s' — trying StorLeads", company_name)
+
+    # 2. StorLeads (Shopify)
+    result = get_shopify_revenue(company_name, domain)
+    if result.get("revenue") is not None:
+        return result
+    logger.info("StorLeads: not found for '%s' — trying LeadMagic", company_name)
+
+    # 3. LeadMagic
+    result = get_company_revenue(company_name, domain)
+    if result.get("revenue") is not None:
+        return result
+    logger.info("LeadMagic: not found for '%s' — trying Claude web search", company_name)
+
+    # 4. Claude web search (last resort)
+    result = get_revenue_via_web(company_name, domain)
+    if result.get("revenue") is not None:
+        return result
+
+    logger.info("All sources exhausted for '%s'", company_name)
+    return {"revenue": None, "error": "not_found", "source": "all"}
 
 
 def _scrape_and_callback(
