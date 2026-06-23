@@ -59,7 +59,8 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
     }
 
     try:
-        resp = requests.get(_ZENROWS_API, params=params, timeout=_TIMEOUT)
+        logger.info("ShopScan: calling ZenRows with instructions=%s", instructions)
+        resp = requests.get(_ZENROWS_API, params=params, timeout=90)
         logger.info("ShopScan ZenRows status=%d len=%d", resp.status_code, len(resp.text))
 
         if resp.status_code != 200:
