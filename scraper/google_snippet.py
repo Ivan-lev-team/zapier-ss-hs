@@ -70,15 +70,19 @@ def _google_snippets_zenrows(query: str) -> str:
         "apikey": config.ZENROWS_API_KEY,
         "url": f"https://www.google.com/search?q={requests.utils.quote(query)}&num=10&hl=en&gl=us",
         "premium_proxy": "true",
+        "js_render": "true",
     }
     try:
-        resp = requests.get(url, params=params, timeout=30)
+        resp = requests.get(url, params=params, timeout=60)
+        logger.info("ZenRows Google status=%d len=%d for '%s'", resp.status_code, len(resp.text), query)
         if resp.status_code != 200:
-            logger.warning("ZenRows Google fetch returned %d for '%s'", resp.status_code, query)
+            logger.warning("ZenRows Google fetch returned %d body=%s", resp.status_code, resp.text[:300])
             return ""
         # Strip HTML tags to plain text
         text = re.sub(r"<[^>]+>", " ", resp.text)
-        return re.sub(r"\s+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        logger.info("ZenRows Google stripped text sample: %s", text[:500])
+        return text
     except Exception as exc:
         logger.warning("ZenRows Google error for '%s': %s", query, exc)
         return ""
