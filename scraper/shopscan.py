@@ -81,48 +81,32 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
             page.goto(_URL, wait_until="domcontentloaded", timeout=_TIMEOUT)
             logger.info("ShopScan: page loaded")
 
-            # Log page title and first input fields found for debugging
-            logger.info("ShopScan page title: %s", page.title())
-            all_inputs = page.locator("input").all()
-            logger.info("ShopScan inputs found: %d", len(all_inputs))
-            for i, inp_el in enumerate(all_inputs[:5]):
-                logger.info("  input[%d]: type=%s placeholder=%s name=%s",
-                            i,
-                            inp_el.get_attribute("type"),
-                            inp_el.get_attribute("placeholder"),
-                            inp_el.get_attribute("name"))
-
-            # Find the domain input — try broad selectors first
-            input_sel = "input"
-            page.wait_for_selector(input_sel, timeout=20_000)
-            # Pick first visible text/url input
-            inp = None
-            for candidate in page.locator("input").all():
-                t = (candidate.get_attribute("type") or "text").lower()
-                if t in ("text", "url", "search", ""):
-                    inp = candidate
-                    break
-            if inp is None:
-                inp = page.locator("input").first
+            # Domain input has id="domainInput"
+            inp = page.locator("#domainInput")
+            inp.wait_for(state="visible", timeout=20_000)
             inp.fill(clean)
             logger.info("ShopScan: entered domain '%s'", clean)
 
-            # Submit — try button first, fallback to Enter
-            submit_sel = (
-                'button[type="submit"], button:has-text("Check"), '
-                'button:has-text("Analyze"), button:has-text("Get"), '
-                'button:has-text("Search"), button:has-text("Revenue")'
-            )
+            # Submit the form — input is `required` so Enter submits it.
+            # Try a submit button first, fall back to Enter.
             try:
-                page.locator(submit_sel).first.click(timeout=5_000)
+                page.locator(
+                    'button[type="submit"], button:has-text("Check"), '
+                    'button:has-text("Analyze"), button:has-text("Get"), '
+                    'button:has-text("Search"), button:has-text("Revenue")'
+                ).first.click(timeout=4_000)
             except Exception:
                 inp.press("Enter")
 
-            # Wait for result — look for a revenue figure appearing on the page
+            # Wait for result to render — poll for a $ figure appearing
             logger.info("ShopScan: waiting for results...")
-            page.wait_for_timeout(8_000)  # give JS time to render result
+            page_text = ""
+            for _ in range(12):  # up to ~24s
+                page.wait_for_timeout(2_000)
+                page_text = page.inner_text("body")
+                if _parse_revenue(page_text):
+                    break
 
-            page_text = page.inner_text("body")
             logger.info("ShopScan page text sample: %s", page_text[:600].replace("\n", " "))
 
             revenue = _parse_revenue(page_text)
