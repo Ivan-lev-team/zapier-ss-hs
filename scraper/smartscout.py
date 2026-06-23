@@ -274,12 +274,19 @@ def _build_query_variants(company_name: str, domain: str) -> list[str]:
     """
     seen: set[str] = set()
     variants: list[str] = []
+    _SKIP_WORDS = {"the", "a", "an", "and", "of", "in", "for", "by", "co", "inc", "llc", "ltd"}
 
     def _add(q: str) -> None:
         q = q.strip()
-        if q and q.lower() not in seen:
-            seen.add(q.lower())
-            variants.append(q)
+        if not q:
+            return
+        if q.lower() in seen:
+            return
+        # Skip standalone words that are too generic or too short to be meaningful
+        if len(q) <= 3 or q.lower() in _SKIP_WORDS:
+            return
+        seen.add(q.lower())
+        variants.append(q)
 
     # 1. Original name as-is
     _add(company_name)
