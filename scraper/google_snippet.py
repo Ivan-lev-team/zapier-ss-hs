@@ -15,6 +15,7 @@ import time
 from typing import Optional
 
 import requests
+from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -58,36 +59,42 @@ def _parse_revenue(text: str) -> Optional[int]:
     return result
 
 
-def _google_snippets(query: str) -> list[str]:
-    """Fetch Google search and return all visible text snippets."""
-    url = "https://www.google.com/search"
-    params = {"q": query, "num": 5, "hl": "en", "gl": "us"}
+def _google_snippets_playwright(query: str) -> list[str]:
+    """Use Playwright headless browser to fetch Google results (handles JS redirect)."""
     try:
-        resp = requests.get(url, params=params, headers=_HEADERS, timeout=_TIMEOUT)
-        if resp.status_code != 200:
-            logger.debug("Google returned %d for query: %s", resp.status_code, query)
-            return []
-        html = resp.text
-        # Log first 300 chars to detect CAPTCHA/block pages
-        logger.info("Google response sample for '%s': %s", query, html[:400].replace("\n", " "))
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage",
+                      "--disable-blink-features=AutomationControlled"],
+            )
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+            )
+            page = context.new_page()
+            url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=5&hl=en&gl=us"
+            page.goto(url, wait_until="domcontentloaded", timeout=15_000)
+            page.wait_for_timeout(2_000)  # let JS render snippets
+            text = page.inner_text("body")
+            browser.close()
 
-        # Pull text from <span> and <div> blocks — snippets live here
-        # Strip all tags, collapse whitespace
-        clean = re.sub(r"<[^>]+>", " ", html)
-        clean = re.sub(r"\s+", " ", clean)
+        logger.info("Google snippet text sample for '%s': %s", query, text[:300].replace("\n", " "))
 
-        # Split into chunks around revenue keywords for context
-        chunks = re.split(r"(?i)\b(revenue|sales|annual|turnover|ARR)\b", clean)
+        # Split around revenue keywords and grab context
+        chunks = re.split(r"(?i)\b(revenue|sales|annual|turnover|ARR)\b", text)
         snippets = []
         for i, chunk in enumerate(chunks):
-            # Grab the surrounding context (before + keyword + after)
             if re.match(r"(?i)revenue|sales|annual|turnover|ARR", chunk):
                 ctx = " ".join(chunks[max(0, i-1):i+2])
-                snippets.append(ctx[:300])
-
+                snippets.append(ctx[:400])
         return snippets
     except Exception as exc:
-        logger.debug("Google snippet error for '%s': %s", query, exc)
+        logger.warning("Google snippet Playwright error for '%s': %s", query, exc)
         return []
 
 
@@ -118,7 +125,7 @@ def get_revenue_from_snippets(company_name: str, domain: str) -> dict:
     ]
 
     for query in queries:
-        snippets = _google_snippets(query)
+        snippets = _google_snippets_playwright(query)
         for snippet in snippets:
             revenue = _parse_revenue(snippet)
             if revenue:

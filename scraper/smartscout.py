@@ -325,8 +325,8 @@ def get_t12m_revenue(company_name: str, domain: str) -> dict:
                 "headless": True,
                 "args": _browser_launch_args(),
             }
-            if config.USE_ZENROWS:
-                launch_kwargs["proxy"] = _zenrows_proxy()
+            # SmartScout handles its own auth — never route through ZenRows proxy
+            # (ZenRows causes SSL cert issues with SmartScout's Angular app)
 
             browser = pw.chromium.launch(**launch_kwargs)
             context = browser.new_context(

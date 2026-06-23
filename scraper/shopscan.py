@@ -81,14 +81,29 @@ def get_shopify_revenue_shopscan(domain: str) -> dict:
             page.goto(_URL, wait_until="domcontentloaded", timeout=_TIMEOUT)
             logger.info("ShopScan: page loaded")
 
-            # Find the domain input field — try common selectors
-            input_sel = (
-                'input[type="text"], input[type="url"], '
-                'input[placeholder*="domain"], input[placeholder*="store"], '
-                'input[placeholder*="url"], input[name*="domain"], input[name*="url"]'
-            )
-            page.wait_for_selector(input_sel, timeout=15_000)
-            inp = page.locator(input_sel).first
+            # Log page title and first input fields found for debugging
+            logger.info("ShopScan page title: %s", page.title())
+            all_inputs = page.locator("input").all()
+            logger.info("ShopScan inputs found: %d", len(all_inputs))
+            for i, inp_el in enumerate(all_inputs[:5]):
+                logger.info("  input[%d]: type=%s placeholder=%s name=%s",
+                            i,
+                            inp_el.get_attribute("type"),
+                            inp_el.get_attribute("placeholder"),
+                            inp_el.get_attribute("name"))
+
+            # Find the domain input — try broad selectors first
+            input_sel = "input"
+            page.wait_for_selector(input_sel, timeout=20_000)
+            # Pick first visible text/url input
+            inp = None
+            for candidate in page.locator("input").all():
+                t = (candidate.get_attribute("type") or "text").lower()
+                if t in ("text", "url", "search", ""):
+                    inp = candidate
+                    break
+            if inp is None:
+                inp = page.locator("input").first
             inp.fill(clean)
             logger.info("ShopScan: entered domain '%s'", clean)
 
