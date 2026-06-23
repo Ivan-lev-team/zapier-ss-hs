@@ -68,6 +68,8 @@ def _google_snippets(query: str) -> list[str]:
             logger.debug("Google returned %d for query: %s", resp.status_code, query)
             return []
         html = resp.text
+        # Log first 300 chars to detect CAPTCHA/block pages
+        logger.info("Google response sample for '%s': %s", query, html[:400].replace("\n", " "))
 
         # Pull text from <span> and <div> blocks — snippets live here
         # Strip all tags, collapse whitespace
