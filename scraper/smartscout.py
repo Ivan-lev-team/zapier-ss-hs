@@ -75,7 +75,9 @@ def _save_cookies(context: BrowserContext) -> None:
         "cookies": cookies,
     }
     try:
-        _cache_path().write_text(json.dumps(payload))
+        p = _cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(payload))
         logger.debug("Session cookies saved (%d cookies)", len(cookies))
     except Exception as exc:
         logger.warning("Could not save session cache: %s", exc)

@@ -7,4 +7,7 @@ services:
       - .env
     restart: always
     volumes:
-      - /tmp/ss_session.json:/tmp/ss_session.json
+      - ss_session:/tmp/ss_cache
+
+volumes:
+  ss_session:
