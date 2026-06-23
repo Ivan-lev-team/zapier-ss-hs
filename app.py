@@ -16,6 +16,7 @@ from flask import Flask, request, jsonify
 import config
 from scraper.smartscout import get_t12m_revenue
 from scraper.storeleads import get_shopify_revenue
+from scraper.shopscan import get_shopify_revenue_shopscan
 from scraper.leadmagic import get_company_revenue
 from scraper.google_snippet import get_revenue_from_snippets
 from scraper.claude_search import get_revenue_via_web
@@ -89,21 +90,28 @@ def _lookup_revenue(company_name: str, domain: str) -> dict:
     result = get_shopify_revenue(company_name, domain)
     if result.get("revenue") is not None:
         return result
-    logger.info("StorLeads: not found for '%s' — trying LeadMagic", company_name)
+    logger.info("StorLeads: not found for '%s' — trying ShopScan", company_name)
 
-    # 3. LeadMagic
+    # 3. ShopScan (Shopify revenue checker, requires ZenRows)
+    if domain:
+        result = get_shopify_revenue_shopscan(domain)
+        if result.get("revenue") is not None:
+            return result
+    logger.info("ShopScan: not found for '%s' — trying LeadMagic", company_name)
+
+    # 4. LeadMagic
     result = get_company_revenue(company_name, domain)
     if result.get("revenue") is not None:
         return result
     logger.info("LeadMagic: not found for '%s' — trying Google snippets", company_name)
 
-    # 4. Google snippet scraper (ZoomInfo/Crunchbase/Owler previews)
+    # 5. Google snippet scraper (ZoomInfo/Crunchbase/Owler previews)
     result = get_revenue_from_snippets(company_name, domain)
     if result.get("revenue") is not None:
         return result
     logger.info("Google snippets: not found for '%s' — trying Claude web search", company_name)
 
-    # 5. Claude web search (last resort)
+    # 6. Claude web search (last resort)
     result = get_revenue_via_web(company_name, domain)
     if result.get("revenue") is not None:
         return result
