@@ -119,16 +119,24 @@ def _lookup_revenue(company_name: str, domain: str) -> dict:
         if result.get("revenue") is not None:
             source = result.get("source", name)
             if source == "smartscout":
-                result["platform"] = "amazon"
-                result["hs_field"] = "amazon_trailing_12_revenue"
+                platform = "amazon"
             elif source == "storeleads":
-                result["platform"] = "shopify"
-                result["hs_field"] = "shopify_trailing_12_revenue"
+                platform = "shopify"
             else:
                 # General source — use detected platform or default to amazon
                 platform = detected_platform or "amazon"
-                result["platform"] = platform
-                result["hs_field"] = "shopify_trailing_12_revenue" if platform == "shopify" else "amazon_trailing_12_revenue"
+
+            result["platform"] = platform
+            result["hs_field"] = (
+                "shopify_trailing_12_revenue" if platform == "shopify"
+                else "amazon_trailing_12_revenue"
+            )
+            # Split revenue so Zapier maps each HubSpot field directly.
+            # Only the matching platform gets a value; the other stays empty
+            # ("" — Zapier skips empty fields on Update, so it won't blank it).
+            rev = result["revenue"]
+            result["amazon_revenue"] = rev if platform == "amazon" else ""
+            result["shopify_revenue"] = rev if platform == "shopify" else ""
             return result
 
         logger.info("%s: not found for '%s' — trying next source", name, company_name)
