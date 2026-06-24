@@ -72,16 +72,23 @@ def _post_callback(callback_url: str, payload: dict) -> None:
 
 
 # Source registry — name → callable(company_name, domain) -> dict
-# Ordered as the production waterfall.
+# Used for isolated single-source testing via the "source" param.
 _SOURCES = [
     ("smartscout", lambda c, d: get_t12m_revenue(c, d)),
     ("storeleads", lambda c, d: get_shopify_revenue(c, d)),
-
     ("leadmagic",  lambda c, d: get_company_revenue(c, d)),
     ("google",     lambda c, d: get_revenue_from_snippets(c, d)),
     ("claude",     lambda c, d: get_revenue_via_web(c, d)),
 ]
 _SOURCE_MAP = dict(_SOURCES)
+
+# General-revenue fallbacks (total company revenue, not channel-specific).
+# Only consulted when BOTH channel sources come up empty.
+_FALLBACK_SOURCES = [
+    ("leadmagic", lambda c, d: get_company_revenue(c, d)),
+    ("google",    lambda c, d: get_revenue_from_snippets(c, d)),
+    ("claude",    lambda c, d: get_revenue_via_web(c, d)),
+]
 
 
 def _run_single_source(source: str, company_name: str, domain: str) -> dict:
@@ -96,53 +103,60 @@ def _run_single_source(source: str, company_name: str, domain: str) -> dict:
 
 def _lookup_revenue(company_name: str, domain: str) -> dict:
     """
-    Waterfall revenue lookup. Tries each source in order, returns the
-    first result with a non-None revenue.
+    Enrich BOTH channels independently, plus a general fallback:
+      - amazon_revenue  ← SmartScout  (Amazon T12 GMV)
+      - shopify_revenue ← StorLeads   (Shopify T12 sales)
+      - general_revenue ← LeadMagic / Google / Claude (total company revenue),
+                          consulted ONLY when both channel sources are empty.
 
-    Platform detection for general sources (LeadMagic, Google, Claude):
-    - SmartScout found the brand (even without revenue) → Amazon
-    - StorLeads found the domain (even without revenue) → Shopify
-    - Neither → Amazon (default, most common for our customer base)
+    All values default to "" (empty string) so Zapier skips them on Update
+    (an empty mapped field won't blank the HubSpot value). A brand selling on
+    both channels gets both amazon_revenue and shopify_revenue filled.
     """
-    detected_platform = None  # set when SmartScout or StorLeads finds the company
+    out = {
+        "company_name": company_name,
+        "amazon_revenue": "",
+        "shopify_revenue": "",
+        "general_revenue": "",
+        "sources": {},
+    }
 
-    for name, fn in _SOURCES:
-        result = fn(company_name, domain)
+    # --- Amazon channel: SmartScout ---
+    ss = get_t12m_revenue(company_name, domain)
+    if ss.get("revenue") is not None:
+        out["amazon_revenue"] = round(ss["revenue"])
+        out["sources"]["amazon"] = "smartscout"
+    else:
+        logger.info("SmartScout: no Amazon revenue for '%s'", company_name)
 
-        # Track platform signals even when revenue isn't found
-        if detected_platform is None:
-            if name == "smartscout" and result.get("error") != "not_found":
-                detected_platform = "amazon"  # brand exists in SmartScout
-            elif name == "storeleads" and result.get("error") != "not_found":
-                detected_platform = "shopify"  # domain exists in StorLeads
+    # --- Shopify channel: StorLeads ---
+    sl = get_shopify_revenue(company_name, domain)
+    if sl.get("revenue") is not None:
+        out["shopify_revenue"] = round(sl["revenue"])
+        out["sources"]["shopify"] = "storeleads"
+    else:
+        logger.info("StorLeads: no Shopify revenue for '%s'", company_name)
 
-        if result.get("revenue") is not None:
-            source = result.get("source", name)
-            if source == "smartscout":
-                platform = "amazon"
-            elif source == "storeleads":
-                platform = "shopify"
-            else:
-                # General source — use detected platform or default to amazon
-                platform = detected_platform or "amazon"
+    # --- General fallback: only when BOTH channels came up empty ---
+    if out["amazon_revenue"] == "" and out["shopify_revenue"] == "":
+        for name, fn in _FALLBACK_SOURCES:
+            r = fn(company_name, domain)
+            if r.get("revenue") is not None:
+                out["general_revenue"] = round(r["revenue"])
+                out["sources"]["general"] = r.get("source", name)
+                break
+            logger.info("%s: no general revenue for '%s' — trying next", name, company_name)
 
-            result["platform"] = platform
-            result["hs_field"] = (
-                "shopify_trailing_12_revenue" if platform == "shopify"
-                else "amazon_trailing_12_revenue"
-            )
-            # Split revenue so Zapier maps each HubSpot field directly.
-            # Only the matching platform gets a value; the other stays empty
-            # ("" — Zapier skips empty fields on Update, so it won't blank it).
-            rev = result["revenue"]
-            result["amazon_revenue"] = rev if platform == "amazon" else ""
-            result["shopify_revenue"] = rev if platform == "shopify" else ""
-            return result
+    out["found"] = bool(
+        out["amazon_revenue"] != ""
+        or out["shopify_revenue"] != ""
+        or out["general_revenue"] != ""
+    )
+    if not out["found"]:
+        logger.info("All sources exhausted for '%s'", company_name)
+        out["error"] = "not_found"
 
-        logger.info("%s: not found for '%s' — trying next source", name, company_name)
-
-    logger.info("All sources exhausted for '%s'", company_name)
-    return {"revenue": None, "error": "not_found", "source": "all"}
+    return out
 
 
 def _scrape_and_callback(
